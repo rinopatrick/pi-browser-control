@@ -1,0 +1,26 @@
+{
+  "name": "pi-browser-control",
+  "version": "0.1.0",
+  "description": "Browser control ala Codex desktop untuk Pi: attach Chrome berjalan, owned tab, live view read-only. Engine CDP: pi-browser-harness.",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions/browser-control.ts"],
+    "skills": ["./skills"]
+  },
+  "files": [
+    "extensions/",
+    "lib/",
+    "skills/"
+  ],
+  "scripts": {
+    "test": "node test/selfcheck.mjs"
+  },
+  "dependencies": {
+    "pi-browser-harness": "^0.13.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
