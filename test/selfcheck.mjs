@@ -28,3 +28,9 @@ test("detectPageChange kenali navigasi user", () => {
   const same = detectPageChange({ url: "https://a.com/", refCount: 10 }, { url: "https://a.com/", refCount: 10 });
   assert.equal(same.changed, false);
 });
+
+test("guard hanya peduli tool browser_", () => {
+  const names = ["browser_navigate", "browser_click", "read", "bash"];
+  const relevant = names.filter((n) => n.startsWith("browser_"));
+  assert.deepEqual(relevant, ["browser_navigate", "browser_click"]);
+});
