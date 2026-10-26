@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "pi-browser-control companion",
+  "version": "0.1.0",
+  "description": "Attach Pi to tabs in the running Chrome via chrome.debugger, bridged over Native Messaging. No relaunch, no remote-debugging flag.",
+  "permissions": ["debugger", "activeTab", "tabs", "nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "pi-browser-control"
+  }
+}

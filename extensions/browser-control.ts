@@ -6,8 +6,10 @@
  * command bc-policy (tampilkan policy efektif).
  */
 
-import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, defineTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
 import { checkPermission, loadConfig, requiresConfirmation, type PolicyConfig } from "../lib/policy.mjs";
+import { bridgeSend, BRIDGE_PORT } from "../lib/bridge.mjs";
 
 const MARKER = "pi-browser-control:";
 
@@ -30,7 +32,7 @@ export default function browserControl(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("bc-policy", {
-    description: "[pi-browser-control] Tampilkan policy browser yang berlaku",
+    description: "[pi-browser-control] Show the effective browser policy",
     handler: async (_args: string, ctx) => {
       config = loadConfig({ cwd: ctx.cwd });
       pi.sendUserMessage(
@@ -38,6 +40,54 @@ export default function browserControl(pi: ExtensionAPI) {
       );
     },
   });
+
+  pi.registerCommand("bc-attach", {
+    description: "[pi-browser-control] Attach to the running Chrome via the companion extension (no relaunch, no flag)",
+    handler: async (_args: string) => {
+      pi.sendUserMessage(
+        `Call the bc_bridge tool with op="listTabs" (port ${BRIDGE_PORT}). Pick a tab that is not held by another debugger, then attach with op="attach".`,
+      );
+    },
+  });
+
+  const bridgeTool = defineTool({
+    name: "bc_bridge",
+    label: "Browser Bridge",
+    description:
+      "Send a CDP command to the running Chrome via the companion extension bridge. " +
+      "Ops: listTabs, attach, detach, command {domain, method, params}. " +
+      "Requires the companion extension + native host installed (see README phase 2).",
+    parameters: Type.Object({
+      op: Type.Union([
+        Type.Literal("listTabs"),
+        Type.Literal("attach"),
+        Type.Literal("detach"),
+        Type.Literal("command"),
+      ]),
+      tabId: Type.Optional(Type.Number()),
+      command: Type.Optional(Type.Object({
+        domain: Type.String(),
+        method: Type.String(),
+        params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+      })),
+    }),
+    async execute(_id, params) {
+      const res = await bridgeSend({
+        op: params.op,
+        tabId: params.tabId,
+        command: params.command,
+      });
+      const text = res.ok
+        ? `bridge ok: ${JSON.stringify(res.result).slice(0, 2000)}`
+        : `bridge failed: ${res.error}`;
+      return {
+        content: [{ type: "text", text }],
+        details: res,
+      };
+    },
+  });
+
+  pi.registerTool(bridgeTool);
 
   pi.on("tool_call", async (event, ctx) => {
     const name = String(event.toolName ?? "");

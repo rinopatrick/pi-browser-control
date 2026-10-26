@@ -1,6 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { matchesPattern, checkPermission, requiresConfirmation, detectPageChange, DEFAULT_CONFIG } from "../lib/policy.mjs";
+import { bridgeSend, BRIDGE_PORT } from "../lib/bridge.mjs";
+
+test("bridge tanpa host gagal graceful dengan pesan jelas", async () => {
+  const res = await bridgeSend({ op: "listTabs" }, { port: 17999, timeoutMs: 3000 });
+  assert.equal(res.ok, false);
+  assert.match(String(res.error), /bridge|127\.0\.0\.1|native-host/i);
+});
+
+test("bridge port default 17832", () => {
+  assert.equal(BRIDGE_PORT, 17832);
+});
 
 test("matchesPattern cocokkan subdomain dan bare domain", () => {
   assert.equal(matchesPattern("ads.example.com", "*.example.com"), true);

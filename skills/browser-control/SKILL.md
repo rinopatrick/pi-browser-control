@@ -9,10 +9,18 @@ Attach ke Chrome berjalan, kerja di owned tab, live view read-only.
 
 ## Perintah
 
+- `/bc-attach` — attach ke Chrome utama via companion bridge (tanpa relaunch).
 - `/bc-view` — tampilkan tab agent agar user menonton.
 - `/bc-policy` — tampilkan policy efektif.
 
-## Aliran kerja
+## Aliran kerja (jalur companion, utama)
+
+1. Pastikan native host jalan + companion extension terpasang; bila tidak arahkan install README fase 2.
+2. `bc_bridge` listTabs → attach tab bebas (jangan rebutan dengan debugger lain).
+3. Kirim perintah CDP via `bc_bridge` command, baca hasil.
+4. Sentuhan user = page change biasa: re-snapshot + revisit bila hilang.
+
+## Aliran kerja (jalur harness, fallback)
 
 1. Pastikan Chrome remote debugging aktif; bila tidak arahkan `/browser-setup` harness.
 2. Buka atau pakai ulang owned tab harness.
