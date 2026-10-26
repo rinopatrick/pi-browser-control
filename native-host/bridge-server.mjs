@@ -110,12 +110,29 @@ function json(res, status, obj) {
   res.end(body);
 }
 
+const EXT_ID = process.env.PI_BC_EXT_ID || "oinpiamkgncpoekibkgjgobpfeijopcg";
+const EXT_ORIGIN = `chrome-extension://${EXT_ID}`;
+const MAX_BODY = 1024 * 1024;
+
+/** Browsers always send Origin on cross-origin fetches; Node clients do not. */
+function isBrowserRequest(req) {
+  return typeof req.headers.origin === "string" && req.headers.origin.length > 0;
+}
+
 function readBody(req) {
   return new Promise((resolve) => {
     let b = "";
+    let tooBig = false;
     req.setEncoding("utf8");
-    req.on("data", (c) => (b += c));
-    req.on("end", () => resolve(b));
+    req.on("data", (c) => {
+      if (tooBig) return;
+      b += c;
+      if (b.length > MAX_BODY) {
+        tooBig = true;
+        b = "";
+      }
+    });
+    req.on("end", () => resolve(tooBig ? null : b));
   });
 }
 
@@ -130,7 +147,19 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.url === "/command" && req.method === "POST") {
+    // Reject anything a web page could send. A malicious site can POST
+    // text/plain to localhost without a CORS preflight, so Origin + content-type
+    // are the real boundary here.
+    if (isBrowserRequest(req)) {
+      return json(res, 403, { ok: false, error: "browser-originated requests are not allowed" });
+    }
+    const ctype = String(req.headers["content-type"] || "");
+    if (!ctype.startsWith("application/json")) {
+      return json(res, 415, { ok: false, error: "content-type must be application/json" });
+    }
+
     const raw = await readBody(req);
+    if (raw === null) return json(res, 413, { ok: false, error: "body too large" });
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -171,6 +200,9 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.url === "/shutdown" && req.method === "POST") {
+    if (isBrowserRequest(req)) {
+      return json(res, 403, { ok: false, error: "browser-originated requests are not allowed" });
+    }
     json(res, 200, { ok: true, stopping: true });
     setTimeout(() => server.close(() => process.exit(0)), 50);
     return;
@@ -181,6 +213,13 @@ const server = createServer(async (req, res) => {
 
 server.on("upgrade", (req, socket) => {
   if (!req.url || !req.url.startsWith("/ext")) {
+    socket.destroy();
+    return;
+  }
+  // Only our own extension may register as the CDP peer. Without this a web
+  // page could open ws://127.0.0.1:17832/ext and hijack the slot.
+  const origin = String(req.headers.origin || "");
+  if (origin !== EXT_ORIGIN) {
     socket.destroy();
     return;
   }

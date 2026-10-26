@@ -15,6 +15,32 @@ test("bridge auto-start server, lalu 503 karena extension belum konek", async ()
   await bridgeShutdown({ port: TEST_PORT });
 });
 
+test("bridge tolak request dari browser (Origin header)", async () => {
+  const res = await fetch(`http://127.0.0.1:${TEST_PORT}/command`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://evil.example" },
+    body: JSON.stringify({ op: "listTabs" }),
+  });
+  assert.equal(res.status, 403);
+});
+
+test("bridge tolak content-type yang bukan JSON (CSRF text/plain)", async () => {
+  const res = await fetch(`http://127.0.0.1:${TEST_PORT}/command`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ op: "listTabs" }),
+  });
+  assert.equal(res.status, 415);
+});
+
+test("bridge tolak shutdown dari browser", async () => {
+  const res = await fetch(`http://127.0.0.1:${TEST_PORT}/shutdown`, {
+    method: "POST",
+    headers: { origin: "https://evil.example" },
+  });
+  assert.equal(res.status, 403);
+});
+
 test("bridge health mati setelah shutdown", async () => {
   await new Promise((r) => setTimeout(r, 300));
   const st = await bridgeStatus({ port: TEST_PORT });
