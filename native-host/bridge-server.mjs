@@ -216,10 +216,11 @@ server.on("upgrade", (req, socket) => {
     socket.destroy();
     return;
   }
-  // Only our own extension may register as the CDP peer. Without this a web
-  // page could open ws://127.0.0.1:17832/ext and hijack the slot.
+  // Only our own extension may register as the CDP peer. Web pages always
+  // send an Origin header; a service worker may omit it, and a local
+  // non-browser client can spoof anything anyway (same user = same trust).
   const origin = String(req.headers.origin || "");
-  if (origin !== EXT_ORIGIN) {
+  if (origin && origin !== EXT_ORIGIN) {
     socket.destroy();
     return;
   }

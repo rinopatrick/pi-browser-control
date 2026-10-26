@@ -115,8 +115,23 @@ function onBridgeMessage(ev) {
   reply(msg.id, false, "unknown op: " + msg.op);
 }
 
+let connectTimer = null;
+
+function resetSocket() {
+  if (connectTimer) {
+    clearTimeout(connectTimer);
+    connectTimer = null;
+  }
+  if (ws) {
+    try { ws.close(); } catch {}
+    ws = null;
+  }
+}
+
 function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  // A socket stuck in CONNECTING would otherwise block every retry forever.
+  if (ws && ws.readyState === WebSocket.CONNECTING) return;
 
   try {
     ws = new WebSocket(BRIDGE_URL);
@@ -125,8 +140,20 @@ function connect() {
     return;
   }
 
+  if (connectTimer) clearTimeout(connectTimer);
+  connectTimer = setTimeout(() => {
+    if (ws && ws.readyState !== WebSocket.OPEN) {
+      resetSocket();
+      scheduleReconnect();
+    }
+  }, 5000);
+
   ws.addEventListener("open", () => {
     retryMs = 1000;
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+    }
     send({ id: "hello-" + Date.now(), op: "ping" });
     // Wake the server-side pairing immediately so /health flips to connected.
     chrome.action.setTitle({ title: "pi-browser-control: bridge connected" }).catch(() => {});
@@ -135,6 +162,10 @@ function connect() {
   ws.addEventListener("message", onBridgeMessage);
 
   ws.addEventListener("close", () => {
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+    }
     ws = null;
     scheduleReconnect();
   });
@@ -154,10 +185,11 @@ function scheduleReconnect() {
 chrome.alarms.create("pi-bc-heartbeat", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== "pi-bc-heartbeat") return;
-  if (!ws || ws.readyState === WebSocket.CLOSED) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
     retryMs = 1000;
+    resetSocket();
     connect();
-  } else if (ws.readyState === WebSocket.OPEN) {
+  } else {
     send({ id: "hb-" + Date.now(), op: "ping" });
   }
 });
@@ -165,7 +197,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
 chrome.tabs.onUpdated.addListener((_tabId, info) => {
-  if (info.status === "complete" && (!ws || ws.readyState === WebSocket.CLOSED)) connect();
+  if (info.status === "complete" && (!ws || ws.readyState !== WebSocket.OPEN)) connect();
 });
 
 connect();
