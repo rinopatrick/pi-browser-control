@@ -1,0 +1,12 @@
+{
+  "name": "com.pi_browser_control.host",
+  "description": "pi-browser-control native host: Chrome debugger bridge to Pi",
+  "path": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+    "C:\\Users\\patri\\.t3\\projects\\pi-browser-control\\native-host\\native-host.mjs"
+  ],
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://oinpiamkgncpoekibkgjgobpfeijopcg/"
+  ]
+}
