@@ -18,8 +18,7 @@ export default function browserControl(pi: ExtensionAPI) {
     description: "[pi-browser-control] Live view read-only tab agent agar user bisa menonton",
     handler: async (_args: string) => {
       pi.sendUserMessage(
-        "Panggil tool browser_snapshot milik harness dengan includeScreenshot=true, " +
-        "lalu tampilkan ringkas apa yang terlihat di tab agent saat ini.",
+        "Panggil tool browser_snapshot milik harness dengan includeScreenshot=true, lalu tampilkan ringkas apa yang terlihat di tab agent.",
       );
     },
   });
@@ -29,9 +28,7 @@ export default function browserControl(pi: ExtensionAPI) {
     handler: async (_args: string, ctx) => {
       config = loadConfig({ cwd: ctx.cwd });
       pi.sendUserMessage(
-        `Policy: deny=[${config.permissions.deny.join(", ") || "none"}] ` +
-        `allow=[${config.permissions.allow.join(", ") || "none"}]. ` +
-        "Tampilkan ke user apa adanya.",
+        `Policy deny=[${config.permissions.deny.join(", ") || "none"}] allow=[${config.permissions.allow.join(", ") || "none"}]`,
       );
     },
   });
