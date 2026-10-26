@@ -18,10 +18,11 @@ const manifestPath = join(dir, "host-manifest.json");
 const manifest = {
   name: "com.pi_browser_control.host",
   description: "pi-browser-control native host: Chrome debugger bridge to Pi",
-  path: process.execPath,
-  args: [join(dir, "native-host.mjs")],
+  // NOTE: Chrome ignores the "args" field of native host manifests.
+  // Keep the launcher .bat as the entry point, never node.exe directly.
+  path: join(dir, "native-host.bat"),
   type: "stdio",
-  allowed_origins: ["chrome-extension://__FILL_EXTENSION_ID__/"],
+  allowed_origins: ["chrome-extension://oinpiamkgncpoekibkgjgobpfeijopcg/"],
 };
 
 writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
@@ -30,7 +31,7 @@ console.log("wrote " + manifestPath);
 const key = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.pi_browser_control.host";
 try {
   execSync(`reg add "${key}" /ve /d "${manifestPath}" /f`, { stdio: "inherit" });
-  console.log("registered. Now set allowed_origins to your extension id in host-manifest.json, then reload the extension.");
+  console.log("registered with extension id pinned. Reload the extension in chrome://extensions.");
 } catch (e) {
   console.error("reg add failed — run in a normal Windows shell, not sandboxed.");
   process.exitCode = 1;
