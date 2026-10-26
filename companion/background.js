@@ -112,4 +112,16 @@ chrome.runtime.onStartup.addListener(() => {
   if (!port) connect();
 });
 
+// Keep the service worker alive: Chrome may suspend it, which drops the
+// native port. Reconnect on a heartbeat so the host always has a peer.
+chrome.alarms.create("pi-bc-heartbeat", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "pi-bc-heartbeat" && !port) connect();
+});
+
+// Reconnect whenever a tab finishes loading — cheap, keeps the bridge warm.
+chrome.tabs.onUpdated.addListener((_tabId, info) => {
+  if (info.status === "complete" && !port) connect();
+});
+
 connect();
