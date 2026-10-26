@@ -10,6 +10,7 @@ import { type ExtensionAPI, defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { checkPermission, loadConfig, requiresConfirmation, type PolicyConfig } from "../lib/policy.mjs";
 import { bridgeSend, bridgeStatus, BRIDGE_PORT } from "../lib/bridge.mjs";
+import { bridgeSensitiveName, bridgeUrl } from "../lib/policy.mjs";
 
 const MARKER = "pi-browser-control:";
 
@@ -99,21 +100,40 @@ export default function browserControl(pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     const name = String(event.toolName ?? "");
-    if (!name.startsWith("browser_")) return;
+    const isHarness = name.startsWith("browser_");
+    const isBridge = name === "bc_bridge";
+    if (!isHarness && !isBridge) return;
+
     const m = ctx.model as { id?: string; provider?: string } | undefined;
     const current = m?.id ? `${m.provider ?? "?"}/${m.id}` : null;
     if (pinnedModel && current && pinnedModel !== current) {
       return { block: true, reason: `${MARKER} model berubah di tengah jalan (${pinnedModel} -> ${current}). Ulangi dari snapshot baru agar konteks konsisten.` };
     }
-    const url = typeof event.input?.url === "string" ? event.input.url : undefined;
+
+    // Collect the URL this call would visit, whichever surface it comes from.
+    let url = typeof event.input?.url === "string" ? event.input.url : undefined;
+    if (isBridge) {
+      const cmd = (event.input as { command?: { domain?: string; method?: string; params?: Record<string, unknown> } }).command;
+      if (cmd) url = bridgeUrl(cmd.domain ?? "", cmd.method ?? "", cmd.params) ?? url;
+    }
+
     if (url) {
       const verdict = checkPermission(url, config);
       if (!verdict.allowed) return { block: true, reason: `${MARKER} ${verdict.reason}` };
     }
-    if (requiresConfirmation(name, config)) {
-      if (!ctx.hasUI) return { block: true, reason: `${MARKER} ${name} butuh konfirmasi user (tanpa UI, diblokir)` };
-      const ok = await ctx.ui.confirm(`Jalankan ${name}?`, name);
-      if (!ok) return { block: true, reason: `${MARKER} user menolak ${name}` };
+
+    // Sensitive bridge commands get the same gate as harness eval/download/upload.
+    const sensitiveName = isBridge
+      ? (() => {
+          const cmd = (event.input as { command?: { domain?: string; method?: string } }).command;
+          return cmd ? bridgeSensitiveName(cmd.domain ?? "", cmd.method ?? "") : "";
+        })()
+      : name;
+
+    if (sensitiveName && requiresConfirmation(sensitiveName, config)) {
+      if (!ctx.hasUI) return { block: true, reason: `${MARKER} ${sensitiveName} butuh konfirmasi user (tanpa UI, diblokir)` };
+      const ok = await ctx.ui.confirm(`Jalankan ${sensitiveName}?`, sensitiveName);
+      if (!ok) return { block: true, reason: `${MARKER} user menolak ${sensitiveName}` };
     }
   });
 }

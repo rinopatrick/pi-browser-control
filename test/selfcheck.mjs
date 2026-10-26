@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchesPattern, checkPermission, requiresConfirmation, detectPageChange, DEFAULT_CONFIG } from "../lib/policy.mjs";
+import { matchesPattern, checkPermission, requiresConfirmation, detectPageChange, bridgeSensitiveName, bridgeUrl, DEFAULT_CONFIG } from "../lib/policy.mjs";
 import { bridgeSend, bridgeStatus, bridgeShutdown, BRIDGE_PORT } from "../lib/bridge.mjs";
 
 const TEST_PORT = 17999;
@@ -56,6 +56,19 @@ test("guard hanya peduli tool browser_", () => {
   const names = ["browser_navigate", "browser_click", "read", "bash"];
   const relevant = names.filter((n) => n.startsWith("browser_"));
   assert.deepEqual(relevant, ["browser_navigate", "browser_click"]);
+});
+
+test("bridge: navigate URL terdeteksi untuk policy", () => {
+  assert.equal(bridgeUrl("Page", "navigate", { url: "https://evil.example/" }), "https://evil.example/");
+  assert.equal(bridgeUrl("Runtime", "evaluate", { expression: "1" }), undefined);
+});
+
+test("bridge: eval dan screenshot butuh konfirmasi", () => {
+  assert.equal(bridgeSensitiveName("Runtime", "evaluate"), "bc_eval");
+  assert.equal(requiresConfirmation(bridgeSensitiveName("Runtime", "evaluate"), DEFAULT_CONFIG), true);
+  assert.equal(bridgeSensitiveName("Page", "captureScreenshot"), "bc_download");
+  assert.equal(requiresConfirmation(bridgeSensitiveName("Page", "captureScreenshot"), DEFAULT_CONFIG), true);
+  assert.equal(bridgeSensitiveName("Page", "navigate"), "");
 });
 
 test("pin model: ganti model di tengah jalan terdeteksi", () => {
