@@ -1,13 +1,16 @@
 /**
- * pi-browser-control — Codex-style browser control for Pi.
+ * pi-browser-control — browser control ala Codex untuk Pi.
  *
- * CDP engine: pi-browser-harness (dependency, credited in README).
- * This layer: per-site policy guard, bc-view command (live view),
- * bc-policy command (show effective policy).
+ * Engine CDP: pi-browser-harness (dependensi, credit di README).
+ * Lapisan ini: guard policy per-site, command bc-view (live view),
+ * command bc-policy (tampilkan policy efektif).
  */
 
-import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, defineTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
 import { checkPermission, loadConfig, requiresConfirmation, type PolicyConfig } from "../lib/policy.mjs";
+import { bridgeSend, bridgeStatus, BRIDGE_PORT } from "../lib/bridge.mjs";
+import { bridgeSensitiveName, bridgeUrl } from "../lib/policy.mjs";
 
 const MARKER = "pi-browser-control:";
 
@@ -21,10 +24,10 @@ export default function browserControl(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("bc-view", {
-    description: "[pi-browser-control] Read-only live view of the agent tab so the user can watch",
+    description: "[pi-browser-control] Live view read-only tab agent agar user bisa menonton",
     handler: async (_args: string) => {
       pi.sendUserMessage(
-        "Call the harness browser_snapshot tool with includeScreenshot=true, then briefly show what is visible in the agent tab.",
+        "Panggil tool browser_snapshot milik harness dengan includeScreenshot=true, lalu tampilkan ringkas apa yang terlihat di tab agent.",
       );
     },
   });
@@ -39,23 +42,98 @@ export default function browserControl(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("bc-attach", {
+    description: "[pi-browser-control] Attach to the running Chrome via the companion extension (no relaunch, no flag)",
+    handler: async (_args: string) => {
+      pi.sendUserMessage(
+        `Call the bc_bridge tool with op="listTabs" (port ${BRIDGE_PORT}). Pick a tab that is not held by another debugger, then attach with op="attach".`,
+      );
+    },
+  });
+
+  const bridgeTool = defineTool({
+    name: "bc_bridge",
+    label: "Browser Bridge",
+    description:
+      "Control the running Chrome through the companion extension bridge (chrome.debugger). " +
+      "Ops: status, listTabs, attach, detach, command {domain, method, params}. " +
+      "The bridge server auto-starts on first use; the companion extension must be enabled in chrome://extensions.",
+    parameters: Type.Object({
+      op: Type.Union([
+        Type.Literal("status"),
+        Type.Literal("listTabs"),
+        Type.Literal("attach"),
+        Type.Literal("detach"),
+        Type.Literal("command"),
+      ]),
+      tabId: Type.Optional(Type.Number()),
+      command: Type.Optional(Type.Object({
+        domain: Type.String(),
+        method: Type.String(),
+        params: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+      })),
+    }),
+    async execute(_id, params) {
+      if (params.op === "status") {
+        const st = await bridgeStatus();
+        return {
+          content: [{ type: "text", text: `bridge ${st.running ? "running" : "stopped"}: ${JSON.stringify(st)}` }],
+          details: st,
+        };
+      }
+      const res = await bridgeSend({
+        op: params.op,
+        tabId: params.tabId,
+        command: params.command,
+      });
+      const text = res.ok
+        ? `bridge ok: ${JSON.stringify(res.result).slice(0, 2000)}`
+        : `bridge failed: ${res.error}`;
+      return {
+        content: [{ type: "text", text }],
+        details: res,
+      };
+    },
+  });
+
+  pi.registerTool(bridgeTool);
+
   pi.on("tool_call", async (event, ctx) => {
     const name = String(event.toolName ?? "");
-    if (!name.startsWith("browser_")) return;
+    const isHarness = name.startsWith("browser_");
+    const isBridge = name === "bc_bridge";
+    if (!isHarness && !isBridge) return;
+
     const m = ctx.model as { id?: string; provider?: string } | undefined;
     const current = m?.id ? `${m.provider ?? "?"}/${m.id}` : null;
     if (pinnedModel && current && pinnedModel !== current) {
-      return { block: true, reason: `${MARKER} model changed mid-run (${pinnedModel} -> ${current}). Restart from a fresh snapshot to keep context consistent.` };
+      return { block: true, reason: `${MARKER} model berubah di tengah jalan (${pinnedModel} -> ${current}). Ulangi dari snapshot baru agar konteks konsisten.` };
     }
-    const url = typeof event.input?.url === "string" ? event.input.url : undefined;
+
+    // Collect the URL this call would visit, whichever surface it comes from.
+    let url = typeof event.input?.url === "string" ? event.input.url : undefined;
+    if (isBridge) {
+      const cmd = (event.input as { command?: { domain?: string; method?: string; params?: Record<string, unknown> } }).command;
+      if (cmd) url = bridgeUrl(cmd.domain ?? "", cmd.method ?? "", cmd.params) ?? url;
+    }
+
     if (url) {
       const verdict = checkPermission(url, config);
       if (!verdict.allowed) return { block: true, reason: `${MARKER} ${verdict.reason}` };
     }
-    if (requiresConfirmation(name, config)) {
-      if (!ctx.hasUI) return { block: true, reason: `${MARKER} ${name} needs user confirmation (no UI, blocked)` };
-      const ok = await ctx.ui.confirm(`Run ${name}?`, name);
-      if (!ok) return { block: true, reason: `${MARKER} user rejected ${name}` };
+
+    // Sensitive bridge commands get the same gate as harness eval/download/upload.
+    const sensitiveName = isBridge
+      ? (() => {
+          const cmd = (event.input as { command?: { domain?: string; method?: string } }).command;
+          return cmd ? bridgeSensitiveName(cmd.domain ?? "", cmd.method ?? "") : "";
+        })()
+      : name;
+
+    if (sensitiveName && requiresConfirmation(sensitiveName, config)) {
+      if (!ctx.hasUI) return { block: true, reason: `${MARKER} ${sensitiveName} butuh konfirmasi user (tanpa UI, diblokir)` };
+      const ok = await ctx.ui.confirm(`Jalankan ${sensitiveName}?`, sensitiveName);
+      if (!ok) return { block: true, reason: `${MARKER} user menolak ${sensitiveName}` };
     }
   });
 }
