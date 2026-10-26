@@ -1,29 +1,63 @@
 # pi-browser-control
 
-Codex-desktop-style browser control for Pi: the agent operates a visible Chrome,
-the user watches live, other tabs are undisturbed. Not computer use.
+Browser control ala Codex desktop untuk Pi: agent operasikan Chrome terlihat,
+user menonton live, tab lain tidak terganggu. Bukan computer use.
 
 ## Install
 
 ```bash
-pi install ./pi-browser-control   # local, or
-pi install npm:pi-browser-control # after publishing
+pi install ./pi-browser-control   # lokal, atau
+pi install npm:pi-browser-control # setelah publish
 ```
 
-Enable Chrome remote debugging, then run `/browser-setup` (from the harness) once.
+Dua jalur attach:
 
-## Usage
+### A. Companion extension (tanpa relaunch, profil login utuh)
 
-- `/bc-view` — read-only live view of the agent tab.
-- `/bc-policy` — effective policy.
-- Annotations: click an element on the live page, leave a comment, the agent reads it back.
+1. Buka `chrome://extensions`, aktifkan Developer mode, **Load unpacked** → folder `companion/`.
+2. Selesai. Bridge server start otomatis saat Pi pertama kali memanggil `bc_bridge`.
 
-## Architecture
+Tidak ada registry, tidak ada Native Messaging, tidak ada relaunch Chrome.
+Banner "is being debugged" tampil saat attach — syarat Chrome.
+Satu debugger per tab: jangan rebutan tab dengan ChatGPT, pakai tab berbeda.
 
-CDP engine = harness (dependency). This layer: policy guard, command UX,
-skill, annotation overlay.
+Jalankan server manual bila mau (opsional):
+```bash
+node native-host/bridge-server.mjs     # http://127.0.0.1:17832
+```
+
+### B. Remote debugging flag (fallback, profil terpisah)
+
+Aktifkan remote debugging Chrome, lalu `/browser-setup` (dari harness) sekali.
+
+## Pakai
+
+- `/bc-attach` — attach ke Chrome utama via companion bridge.
+- `/bc-view` — live view read-only tab agent.
+- `/bc-policy` — policy efektif.
+- Anotasi: klik elemen di live page, tinggalkan komentar, agent baca balik.
+
+## Arsitektur
+
+Engine CDP = harness (dependensi) untuk jalur B.
+
+Jalur A:
+```
+Pi (bc_bridge) --HTTP--> bridge-server.mjs (persisten)
+                              ^
+                              | WebSocket /ext
+                       companion extension (chrome.debugger)
+                              |
+                              v
+                        Chrome tab (profil login utuh)
+```
+
+Bridge server hidup terpisah dari Chrome, jadi Chrome tidak bisa mematikannya.
+Extension reconnect otomatis dengan backoff bila server belum jalan.
+
+Lapisan Pi: guard policy, pin model aktif, command UX, skill, overlay anotasi.
 
 ## Credit
 
-- [pi-browser-harness](https://github.com/amankumarsingh77/pi-browser-harness) — CDP engine (40 tools, ref-first, owned-tab).
-- Annotation + policy patterns: `pi-browser-plus` (author's own).
+- [pi-browser-harness](https://github.com/amankumarsingh77/pi-browser-harness) — engine CDP (40 tools, ref-first, owned-tab).
+- Pola anotasi + policy: `pi-browser-plus` (milik penulis).

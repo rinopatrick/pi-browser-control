@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "pi-browser-control companion",
+  "version": "0.2.0",
+  "description": "Attach Pi to tabs in the running Chrome via chrome.debugger, over a local WebSocket bridge. No relaunch, no remote-debugging flag.",
+  "permissions": ["debugger", "activeTab", "tabs", "alarms"],
+  "host_permissions": ["http://127.0.0.1:17832/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "pi-browser-control"
+  }
+}

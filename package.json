@@ -1,7 +1,7 @@
 {
   "name": "pi-browser-control",
   "version": "0.1.0",
-  "description": "Codex-desktop-style browser control for Pi: attach to a running Chrome, owned tab, read-only live view. CDP engine: pi-browser-harness.",
+  "description": "Browser control ala Codex desktop untuk Pi: attach Chrome berjalan, owned tab, live view read-only. Engine CDP: pi-browser-harness.",
   "keywords": ["pi-package"],
   "license": "MIT",
   "pi": {
@@ -11,7 +11,9 @@
   "files": [
     "extensions/",
     "lib/",
-    "skills/"
+    "skills/",
+    "companion/",
+    "native-host/"
   ],
   "scripts": {
     "test": "node test/selfcheck.mjs"
