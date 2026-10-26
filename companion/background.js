@@ -1,30 +1,35 @@
-// pi-browser-control companion — background service worker.
+// pi-browser-control companion — background service worker (Option A).
 //
-// Bridge: chrome.debugger (privileged, in-Chrome CDP) <-> Native Messaging
-// host (pi-browser-control-native-host). The host exposes a local WebSocket
-// that the Pi package talks to. No remote-debugging flag, no relaunch.
+// Transport: the extension is a WebSocket CLIENT to the local bridge server
+// (ws://127.0.0.1:17832/ext). No Native Messaging, so Chrome can never kill a
+// host process and we never see "Native host has exited".
 //
-// Protocol (JSON lines over the native port):
-//   host -> ext : { id, tabId?, op, params? }
-//     op: "attach" | "detach" | "command" | "listTabs"
-//     command: { domain, method, params? } e.g. {domain:"Page",method:"navigate",params:{url}}
-//   ext -> host: { id, ok, result? | error? }
+// Privileged CDP: chrome.debugger.attach + sendCommand on the target tab.
+//
+// Commands arrive as {id, op, tabId?, command?}:
+//   op: "attach" | "detach" | "command" | "listTabs" | "ping"
+//   command: {domain, method, params?}
+// Replies: {id, ok, result? | error?}
 //
 // Notes:
-// - Only one debugger per tab. If another client (e.g. ChatGPT extension)
-//   holds the tab, attach fails with "Another debugger is attached".
-//   Use a different tab — never fight over the active one.
-// - Chrome shows an infobar "is being debugged" while attached. Required,
-//   cannot be hidden.
+// - One debugger per tab. If another client holds the tab, attach fails.
+// - Chrome shows an infobar "is being debugged" while attached. Required.
 
-const NATIVE_HOST = "com.pi_browser_control.host";
+const BRIDGE_URL = "ws://127.0.0.1:17832/ext";
 const CDP_VERSION = "1.3";
 
-let port = null;
-let pending = new Map();
+let ws = null;
+let retryMs = 1000;
+let helloTimer = null;
 
 function send(obj) {
-  port.postMessage(obj);
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(JSON.stringify(obj));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function reply(id, ok, payload) {
@@ -32,21 +37,24 @@ function reply(id, ok, payload) {
   else send({ id, ok: false, error: String(payload) });
 }
 
-async function handleAttach(id, tabId) {
-  const target = tabId ? { tabId } : await pickActiveTab();
-  if (!target) return reply(id, false, "no tab available");
-  try {
-    await chrome.debugger.attach({ tabId: target.id ?? target.tabId }, CDP_VERSION);
-    const t = target.id ?? target.tabId;
-    reply(id, true, { tabId: t });
-  } catch (e) {
-    reply(id, false, e && e.message ? e.message : String(e));
-  }
-}
-
 async function pickActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0] || null;
+}
+
+async function handleAttach(id, tabId) {
+  try {
+    let target = tabId;
+    if (!target) {
+      const tab = await pickActiveTab();
+      if (!tab) return reply(id, false, "no active tab");
+      target = tab.id;
+    }
+    await chrome.debugger.attach({ tabId: target }, CDP_VERSION);
+    reply(id, true, { tabId: target });
+  } catch (e) {
+    reply(id, false, e && e.message ? e.message : String(e));
+  }
 }
 
 async function handleDetach(id, tabId) {
@@ -60,6 +68,9 @@ async function handleDetach(id, tabId) {
 
 async function handleCommand(id, tabId, command) {
   try {
+    if (!command || !command.domain || !command.method) {
+      return reply(id, false, "command needs {domain, method, params?}");
+    }
     const res = await chrome.debugger.sendCommand(
       { tabId },
       `${command.domain}.${command.method}`,
@@ -75,71 +86,86 @@ async function handleListTabs(id) {
   try {
     const tabs = await chrome.tabs.query({});
     reply(id, true, {
-      tabs: tabs.map((t) => ({ id: t.id, url: t.url || "", title: t.title || "", active: !!t.active })),
+      tabs: tabs.map((t) => ({
+        id: t.id,
+        url: t.url || "",
+        title: t.title || "",
+        active: !!t.active,
+        windowId: t.windowId,
+      })),
     });
   } catch (e) {
     reply(id, false, e && e.message ? e.message : String(e));
   }
 }
 
-function onNativeMessage(msg) {
-  if (!msg || msg.id === undefined || !msg.op) return;
-  const { id, op, tabId, command } = msg;
-  if (op === "attach") return void handleAttach(id, tabId);
-  if (op === "detach") return void handleDetach(id, tabId);
-  if (op === "command") return void handleCommand(id, tabId, command);
-  if (op === "listTabs") return void handleListTabs(id);
-  reply(id, false, "unknown op: " + op);
+function onBridgeMessage(ev) {
+  let msg;
+  try {
+    msg = JSON.parse(ev.data);
+  } catch {
+    return;
+  }
+  if (!msg || msg.id === undefined) return;
+  if (msg.op === "ping") return reply(msg.id, true, { pong: true, ts: Date.now() });
+  if (msg.op === "attach") return void handleAttach(msg.id, msg.tabId);
+  if (msg.op === "detach") return void handleDetach(msg.id, msg.tabId);
+  if (msg.op === "command") return void handleCommand(msg.id, msg.tabId, msg.command);
+  if (msg.op === "listTabs") return void handleListTabs(msg.id);
+  reply(msg.id, false, "unknown op: " + msg.op);
 }
 
 function connect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
   try {
-    port = chrome.runtime.connectNative(NATIVE_HOST);
-  } catch (e) {
-    // Host not registered — retry in 10s so installing the host later just works.
-    setTimeout(connect, 10000);
+    ws = new WebSocket(BRIDGE_URL);
+  } catch {
+    scheduleReconnect();
     return;
   }
-  port.onMessage.addListener(onNativeMessage);
-  port.onDisconnect.addListener(() => {
-    port = null;
-    pending.clear();
-    setTimeout(connect, 5000);
+
+  ws.addEventListener("open", () => {
+    retryMs = 1000;
+    send({ id: "hello-" + Date.now(), op: "ping" });
+    // Wake the server-side pairing immediately so /health flips to connected.
+    chrome.action.setTitle({ title: "pi-browser-control: bridge connected" }).catch(() => {});
   });
-  // Handshake: proves the host is fresh and tells it we are alive.
-  // Host replies {ok, result:{host, pid}}; a missing reply means the
-  // pipe is broken and we must reconnect instead of queuing forever.
-  const helloId = "hello-" + Date.now();
-  let answered = false;
-  const helloListener = (msg) => {
-    if (msg && msg.id === helloId) answered = true;
-  };
-  port.onMessage.addListener(helloListener);
-  try {
-    port.postMessage({ id: helloId, op: "hello" });
-  } catch (e) { /* dead pipe; onDisconnect will reconnect */ }
-  setTimeout(() => {
-    try { port.onMessage.removeListener(helloListener); } catch {}
-    if (!answered && port) {
-      try { port.disconnect(); } catch {}
-    }
-  }, 5000);
+
+  ws.addEventListener("message", onBridgeMessage);
+
+  ws.addEventListener("close", () => {
+    ws = null;
+    scheduleReconnect();
+  });
+
+  ws.addEventListener("error", () => {
+    // close fires right after error; nothing to do here.
+  });
 }
 
-chrome.runtime.onStartup.addListener(() => {
-  if (!port) connect();
-});
+function scheduleReconnect() {
+  chrome.action.setTitle({ title: "pi-browser-control: bridge offline" }).catch(() => {});
+  setTimeout(connect, retryMs);
+  retryMs = Math.min(retryMs * 2, 15000);
+}
 
-// Keep the service worker alive: Chrome may suspend it, which drops the
-// native port. Reconnect on a heartbeat so the host always has a peer.
+// Keep the service worker warm so the socket reconnects promptly.
 chrome.alarms.create("pi-bc-heartbeat", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "pi-bc-heartbeat" && !port) connect();
+  if (alarm.name !== "pi-bc-heartbeat") return;
+  if (!ws || ws.readyState === WebSocket.CLOSED) {
+    retryMs = 1000;
+    connect();
+  } else if (ws.readyState === WebSocket.OPEN) {
+    send({ id: "hb-" + Date.now(), op: "ping" });
+  }
 });
 
-// Reconnect whenever a tab finishes loading — cheap, keeps the bridge warm.
+chrome.runtime.onStartup.addListener(connect);
+chrome.runtime.onInstalled.addListener(connect);
 chrome.tabs.onUpdated.addListener((_tabId, info) => {
-  if (info.status === "complete" && !port) connect();
+  if (info.status === "complete" && (!ws || ws.readyState === WebSocket.CLOSED)) connect();
 });
 
 connect();

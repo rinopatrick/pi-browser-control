@@ -1,12 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { matchesPattern, checkPermission, requiresConfirmation, detectPageChange, DEFAULT_CONFIG } from "../lib/policy.mjs";
-import { bridgeSend, BRIDGE_PORT } from "../lib/bridge.mjs";
+import { bridgeSend, bridgeStatus, bridgeShutdown, BRIDGE_PORT } from "../lib/bridge.mjs";
 
-test("bridge tanpa host gagal graceful dengan pesan jelas", async () => {
-  const res = await bridgeSend({ op: "listTabs" }, { port: 17999, timeoutMs: 3000 });
+const TEST_PORT = 17999;
+
+test("bridge auto-start server, lalu 503 karena extension belum konek", async () => {
+  const res = await bridgeSend({ op: "listTabs" }, { port: TEST_PORT, timeoutMs: 8000 });
   assert.equal(res.ok, false);
-  assert.match(String(res.error), /bridge|127\.0\.0\.1|native-host/i);
+  assert.match(String(res.error), /extension not connected|companion/i);
+  const st = await bridgeStatus({ port: TEST_PORT });
+  assert.equal(st.running, true);
+  assert.equal(st.extension, "disconnected");
+  await bridgeShutdown({ port: TEST_PORT });
+});
+
+test("bridge health mati setelah shutdown", async () => {
+  await new Promise((r) => setTimeout(r, 300));
+  const st = await bridgeStatus({ port: TEST_PORT });
+  assert.equal(st.running, false);
 });
 
 test("bridge port default 17832", () => {

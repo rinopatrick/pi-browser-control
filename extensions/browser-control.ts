@@ -9,7 +9,7 @@
 import { type ExtensionAPI, defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { checkPermission, loadConfig, requiresConfirmation, type PolicyConfig } from "../lib/policy.mjs";
-import { bridgeSend, BRIDGE_PORT } from "../lib/bridge.mjs";
+import { bridgeSend, bridgeStatus, BRIDGE_PORT } from "../lib/bridge.mjs";
 
 const MARKER = "pi-browser-control:";
 
@@ -54,11 +54,12 @@ export default function browserControl(pi: ExtensionAPI) {
     name: "bc_bridge",
     label: "Browser Bridge",
     description:
-      "Send a CDP command to the running Chrome via the companion extension bridge. " +
-      "Ops: listTabs, attach, detach, command {domain, method, params}. " +
-      "Requires the companion extension + native host installed (see README phase 2).",
+      "Control the running Chrome through the companion extension bridge (chrome.debugger). " +
+      "Ops: status, listTabs, attach, detach, command {domain, method, params}. " +
+      "The bridge server auto-starts on first use; the companion extension must be enabled in chrome://extensions.",
     parameters: Type.Object({
       op: Type.Union([
+        Type.Literal("status"),
         Type.Literal("listTabs"),
         Type.Literal("attach"),
         Type.Literal("detach"),
@@ -72,6 +73,13 @@ export default function browserControl(pi: ExtensionAPI) {
       })),
     }),
     async execute(_id, params) {
+      if (params.op === "status") {
+        const st = await bridgeStatus();
+        return {
+          content: [{ type: "text", text: `bridge ${st.running ? "running" : "stopped"}: ${JSON.stringify(st)}` }],
+          details: st,
+        };
+      }
       const res = await bridgeSend({
         op: params.op,
         tabId: params.tabId,

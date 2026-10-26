@@ -15,7 +15,7 @@ Attach ke Chrome berjalan, kerja di owned tab, live view read-only.
 
 ## Aliran kerja (jalur companion, utama)
 
-1. Pastikan native host jalan + companion extension terpasang; bila tidak arahkan install README fase 2.
+1. Cek `bc_bridge` op="status". Server start otomatis; bila extension belum konek, arahkan user aktifkan companion di chrome://extensions.
 2. `bc_bridge` listTabs → attach tab bebas (jangan rebutan dengan debugger lain).
 3. Kirim perintah CDP via `bc_bridge` command, baca hasil.
 4. Sentuhan user = page change biasa: re-snapshot + revisit bila hilang.

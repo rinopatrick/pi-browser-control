@@ -14,14 +14,17 @@ Dua jalur attach:
 
 ### A. Companion extension (tanpa relaunch, profil login utuh)
 
-1. Buka `chrome://extensions`, aktifkan Developer mode, Load unpacked → folder `companion/`.
-2. Catat extension ID, masukkan ke `allowed_origins` di `native-host/host-manifest.json`.
-3. Jalankan sekali: `node native-host/register.mjs` (tulis registry HKCU).
-4. Jalankan host tiap sesi: `node native-host/native-host.mjs` (atau autostart).
-5. Di Pi: `/bc-attach` → `bc_bridge` listTabs → attach tab yang bebas.
+1. Buka `chrome://extensions`, aktifkan Developer mode, **Load unpacked** → folder `companion/`.
+2. Selesai. Bridge server start otomatis saat Pi pertama kali memanggil `bc_bridge`.
 
+Tidak ada registry, tidak ada Native Messaging, tidak ada relaunch Chrome.
 Banner "is being debugged" tampil saat attach — syarat Chrome.
 Satu debugger per tab: jangan rebutan tab dengan ChatGPT, pakai tab berbeda.
+
+Jalankan server manual bila mau (opsional):
+```bash
+node native-host/bridge-server.mjs     # http://127.0.0.1:17832
+```
 
 ### B. Remote debugging flag (fallback, profil terpisah)
 
@@ -37,8 +40,21 @@ Aktifkan remote debugging Chrome, lalu `/browser-setup` (dari harness) sekali.
 ## Arsitektur
 
 Engine CDP = harness (dependensi) untuk jalur B.
-Jalur A: companion extension (`chrome.debugger`, permission `debugger`)
-→ Native Messaging host (`native-host/`) → WebSocket lokal → tool `bc_bridge`.
+
+Jalur A:
+```
+Pi (bc_bridge) --HTTP--> bridge-server.mjs (persisten)
+                              ^
+                              | WebSocket /ext
+                       companion extension (chrome.debugger)
+                              |
+                              v
+                        Chrome tab (profil login utuh)
+```
+
+Bridge server hidup terpisah dari Chrome, jadi Chrome tidak bisa mematikannya.
+Extension reconnect otomatis dengan backoff bila server belum jalan.
+
 Lapisan Pi: guard policy, pin model aktif, command UX, skill, overlay anotasi.
 
 ## Credit
