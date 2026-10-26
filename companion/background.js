@@ -106,6 +106,24 @@ function connect() {
     pending.clear();
     setTimeout(connect, 5000);
   });
+  // Handshake: proves the host is fresh and tells it we are alive.
+  // Host replies {ok, result:{host, pid}}; a missing reply means the
+  // pipe is broken and we must reconnect instead of queuing forever.
+  const helloId = "hello-" + Date.now();
+  let answered = false;
+  const helloListener = (msg) => {
+    if (msg && msg.id === helloId) answered = true;
+  };
+  port.onMessage.addListener(helloListener);
+  try {
+    port.postMessage({ id: helloId, op: "hello" });
+  } catch (e) { /* dead pipe; onDisconnect will reconnect */ }
+  setTimeout(() => {
+    try { port.onMessage.removeListener(helloListener); } catch {}
+    if (!answered && port) {
+      try { port.disconnect(); } catch {}
+    }
+  }, 5000);
 }
 
 chrome.runtime.onStartup.addListener(() => {

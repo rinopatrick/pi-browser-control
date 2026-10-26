@@ -1,22 +1,30 @@
-// pi-browser-control native host.
+// pi-browser-control native host (rewritten fix).
 //
-// Stdin/stdout: Native Messaging framing (u32LE length + UTF-8 JSON).
-// One side: Chrome companion extension (chrome.debugger bridge).
-// Other side: local WebSocket server that the Pi package talks to.
+// Chrome launches ONE instance per connected extension and kills it when the
+// last extension port closes. The old design kept an independent WebSocket
+// server alive forever, so if Chrome killed the host the socket died with
+// the wrong owner, and if the host outlived Chrome the pipe broke.
+// New design: the process lifetime == the extension connection lifetime.
 //
-// Usage: node native-host.mjs [--port 17832]
-// Register first: node register.mjs  (writes the Chrome manifest)
+// Protocol is still two-sided:
+// - stdin/stdout: Native Messaging framing (u32LE length + UTF-8 JSON)
+//   toward the companion extension.
+// - TCP on 127.0.0.1:17832: one-shot JSON-RPC-ish bridge toward the Pi side:
+//   client opens TCP, sends one JSON line {id, op, tabId?, command?},
+//   reads one JSON line reply, closes. No WebSocket, no dependencies,
+//   no background server to go stale.
+//
+// Lifecycle: connectNative spawns us -> we listen on TCP -> extension talks
+// CDP -> host forwards answers to TCP clients -> extension disconnects ->
+// we exit. Next connectNative spawns a fresh host. No orphans.
 
-import { stdin, stdout, exit } from "node:process";
-import { createServer } from "node:http";
+import { stdin, stdout, exit, env, argv } from "node:process";
+import { createServer } from "node:net";
 
-const PORT = Number(process.env.PI_BC_PORT || process.argv.includes("--port")
-  ? process.argv[process.argv.indexOf("--port") + 1]
-  : 17832);
+const PORT = Number(env.PI_BC_PORT || (argv.includes("--port") ? argv[argv.indexOf("--port") + 1] : 17832));
 
 const pending = new Map();
-let seq = 1;
-let wsClients = new Set();
+let extensionDead = false;
 
 function readStdin() {
   let buf = Buffer.alloc(0);
@@ -25,125 +33,107 @@ function readStdin() {
     while (buf.length >= 4) {
       const len = buf.readUInt32LE(0);
       if (buf.length < 4 + len) break;
-      const msg = JSON.parse(buf.slice(4, 4 + len).toString("utf8"));
+      let msg;
+      try {
+        msg = JSON.parse(buf.slice(4, 4 + len).toString("utf8"));
+      } catch {
+        buf = buf.slice(4 + len);
+        continue;
+      }
       buf = buf.slice(4 + len);
       onExtensionMessage(msg);
     }
   });
+  stdin.on("end", () => shutdown());
+  stdin.on("close", () => shutdown());
 }
 
 function sendToExtension(obj) {
-  const body = Buffer.from(JSON.stringify(obj), "utf8");
-  const head = Buffer.alloc(4);
-  head.writeUInt32LE(body.length, 0);
-  stdout.write(Buffer.concat([head, body]));
+  if (extensionDead) return false;
+  try {
+    const body = Buffer.from(JSON.stringify(obj), "utf8");
+    const head = Buffer.alloc(4);
+    head.writeUInt32LE(body.length, 0);
+    stdout.write(Buffer.concat([head, body]));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function onExtensionMessage(msg) {
-  const resolve = pending.get(msg.id);
-  pending.delete(msg.id);
-  if (!resolve) return;
-  resolve(msg);
-  broadcast({ from: "extension", ...msg });
-}
-
-function broadcast(obj) {
-  const text = JSON.stringify(obj);
-  for (const ws of wsClients) {
-    try { ws.send(text); } catch { /* drop dead client */ }
-  }
-}
-
-// Minimal WebSocket server (no dependency): handshake + text frames.
-import { createHash } from "node:crypto";
-import { Socket } from "node:net";
-
-function wsAccept(key) {
-  return createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
-}
-
-const server = createServer((req, res) => {
-  if (req.url === "/health") {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, pending: pending.size }));
+  if (!msg || msg.id === undefined) return;
+  if (msg.op === "hello") {
+    // Extension announcing itself; reply so it knows the host is fresh.
+    sendToExtension({ id: msg.id, ok: true, result: { host: "pi-browser-control", pid: process.pid } });
     return;
   }
-  res.writeHead(404);
-  res.end("not found");
-});
+  const resolve = pending.get(msg.id);
+  pending.delete(msg.id);
+  if (resolve) resolve(msg);
+}
 
-server.on("upgrade", (req, socket) => {
-  const key = req.headers["sec-websocket-key"];
-  if (!key) { socket.destroy(); return; }
-  const accept = wsAccept(Array.isArray(key) ? key[0] : key);
-  socket.write(
-    "HTTP/1.1 101 Switching Protocols\r\n" +
-    "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
-    `Sec-WebSocket-Accept: ${accept}\r\n\r\n`
-  );
-  const client = makeWsClient(socket);
-  wsClients.add(client);
-  socket.on("close", () => wsClients.delete(client));
-});
+function shutdown() {
+  extensionDead = true;
+  for (const [, resolve] of pending) {
+    try { resolve({ ok: false, error: "extension disconnected" }); } catch {}
+  }
+  pending.clear();
+  server.close(() => exit(0));
+  setTimeout(() => exit(0), 1000).unref();
+}
 
-function makeWsClient(socket) {
-  let buf = Buffer.alloc(0);
-  const api = {
-    send(text) {
-      const body = Buffer.from(text, "utf8");
-      const head = Buffer.from([0x81, body.length < 126 ? body.length : 126]);
-      let frame = head;
-      if (body.length >= 126) {
-        const ext = Buffer.alloc(2);
-        ext.writeUInt16BE(body.length, 0);
-        frame = Buffer.concat([head, ext]);
-      }
-      socket.write(Buffer.concat([frame, body]));
-    },
-  };
+// One-shot TCP bridge: one JSON line in, one JSON line out, then close.
+const server = createServer((socket) => {
+  let buf = "";
+  socket.setEncoding("utf8");
+  const timer = setTimeout(() => socket.destroy(), 20000);
   socket.on("data", (chunk) => {
-    buf = Buffer.concat([buf, chunk]);
-    // Minimal masked text-frame parser (client->server frames are masked).
-    while (buf.length >= 6) {
-      const opcode = buf[0] & 0x0f;
-      const masked = (buf[1] & 0x80) !== 0;
-      let len = buf[1] & 0x7f;
-      let off = 2;
-      if (len === 126) { len = buf.readUInt16BE(2); off = 4; }
-      else if (len === 127) { socket.destroy(); return; }
-      const mask = masked ? buf.slice(off, off + 4) : null;
-      off += masked ? 4 : 0;
-      if (buf.length < off + len) break;
-      let payload = buf.slice(off, off + len);
-      if (mask) {
-        const out = Buffer.alloc(len);
-        for (let i = 0; i < len; i++) out[i] = payload[i] ^ mask[i % 4];
-        payload = out;
-      }
-      buf = buf.slice(off + len);
-      if (opcode === 0x8) { socket.end(); return; }
-      if (opcode === 0x1) onPiMessage(payload.toString("utf8"), api);
+    buf += chunk;
+    const nl = buf.indexOf("\n");
+    if (nl < 0) return;
+    const line = buf.slice(0, nl).trim();
+    buf = buf.slice(nl + 1);
+    let msg;
+    try { msg = JSON.parse(line); } catch {
+      clearTimeout(timer);
+      socket.end(JSON.stringify({ ok: false, error: "bad json" }) + "\n");
+      return;
     }
-  });
-  return api;
-}
-
-function onPiMessage(text, ws) {
-  let msg;
-  try { msg = JSON.parse(text); } catch { return; }
-  if (!msg || msg.id === undefined || !msg.op) return;
-  // Forward to extension via Native Messaging; reply routes back via pending.
-  pending.set(msg.id, (res) => ws.send(JSON.stringify(res)));
-  sendToExtension({ id: msg.id, op: msg.op, tabId: msg.tabId, command: msg.command });
-  setTimeout(() => {
-    if (pending.has(msg.id)) {
+    if (!msg || msg.id === undefined || !msg.op) {
+      clearTimeout(timer);
+      socket.end(JSON.stringify({ id: msg && msg.id, ok: false, error: "need {id, op}" }) + "\n");
+      return;
+    }
+    pending.set(msg.id, (res) => {
+      clearTimeout(timer);
+      try { socket.end(JSON.stringify(res) + "\n"); } catch {}
+    });
+    if (!sendToExtension({ id: msg.id, op: msg.op, tabId: msg.tabId, command: msg.command })) {
       pending.delete(msg.id);
-      ws.send(JSON.stringify({ id: msg.id, ok: false, error: "timeout waiting for extension" }));
+      clearTimeout(timer);
+      socket.end(JSON.stringify({ id: msg.id, ok: false, error: "extension not connected" }) + "\n");
+      return;
     }
-  }, 15000);
-}
+    setTimeout(() => {
+      if (pending.has(msg.id)) {
+        pending.delete(msg.id);
+        clearTimeout(timer);
+        try { socket.end(JSON.stringify({ id: msg.id, ok: false, error: "timeout waiting for extension (15s)" }) + "\n"); } catch {}
+      }
+    }, 15000).unref();
+  });
+  socket.on("error", () => { clearTimeout(timer); });
+});
+
+server.on("error", (e) => {
+  // Port taken by a stale host: fail fast so the caller sees it, instead of
+  // silently running a second bridge nobody talks to.
+  process.stderr.write("bridge listen failed: " + (e && e.message) + "\n");
+  exit(2);
+});
 
 readStdin();
 server.listen(PORT, "127.0.0.1", () => {
-  process.stderr.write(`pi-browser-control native host on 127.0.0.1:${PORT}\n`);
+  process.stderr.write(`pi-browser-control native host on 127.0.0.1:${PORT} pid=${process.pid}\n`);
 });
