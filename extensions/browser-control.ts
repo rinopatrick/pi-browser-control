@@ -1,9 +1,9 @@
 /**
- * pi-browser-control — browser control ala Codex untuk Pi.
+ * pi-browser-control — Codex-style browser control for Pi.
  *
- * Engine CDP: pi-browser-harness (dependensi, credit di README).
- * Lapisan ini: guard policy per-site, command bc-view (live view),
- * command bc-policy (tampilkan policy efektif).
+ * CDP engine: pi-browser-harness (dependency, credited in README).
+ * This layer: per-site policy guard, bc-view command (live view),
+ * bc-policy command (show effective policy).
  */
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -21,16 +21,16 @@ export default function browserControl(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("bc-view", {
-    description: "[pi-browser-control] Live view read-only tab agent agar user bisa menonton",
+    description: "[pi-browser-control] Read-only live view of the agent tab so the user can watch",
     handler: async (_args: string) => {
       pi.sendUserMessage(
-        "Panggil tool browser_snapshot milik harness dengan includeScreenshot=true, lalu tampilkan ringkas apa yang terlihat di tab agent.",
+        "Call the harness browser_snapshot tool with includeScreenshot=true, then briefly show what is visible in the agent tab.",
       );
     },
   });
 
   pi.registerCommand("bc-policy", {
-    description: "[pi-browser-control] Tampilkan policy browser yang berlaku",
+    description: "[pi-browser-control] Show the effective browser policy",
     handler: async (_args: string, ctx) => {
       config = loadConfig({ cwd: ctx.cwd });
       pi.sendUserMessage(
@@ -45,7 +45,7 @@ export default function browserControl(pi: ExtensionAPI) {
     const m = ctx.model as { id?: string; provider?: string } | undefined;
     const current = m?.id ? `${m.provider ?? "?"}/${m.id}` : null;
     if (pinnedModel && current && pinnedModel !== current) {
-      return { block: true, reason: `${MARKER} model berubah di tengah jalan (${pinnedModel} -> ${current}). Ulangi dari snapshot baru agar konteks konsisten.` };
+      return { block: true, reason: `${MARKER} model changed mid-run (${pinnedModel} -> ${current}). Restart from a fresh snapshot to keep context consistent.` };
     }
     const url = typeof event.input?.url === "string" ? event.input.url : undefined;
     if (url) {
@@ -53,9 +53,9 @@ export default function browserControl(pi: ExtensionAPI) {
       if (!verdict.allowed) return { block: true, reason: `${MARKER} ${verdict.reason}` };
     }
     if (requiresConfirmation(name, config)) {
-      if (!ctx.hasUI) return { block: true, reason: `${MARKER} ${name} butuh konfirmasi user (tanpa UI, diblokir)` };
-      const ok = await ctx.ui.confirm(`Jalankan ${name}?`, name);
-      if (!ok) return { block: true, reason: `${MARKER} user menolak ${name}` };
+      if (!ctx.hasUI) return { block: true, reason: `${MARKER} ${name} needs user confirmation (no UI, blocked)` };
+      const ok = await ctx.ui.confirm(`Run ${name}?`, name);
+      if (!ok) return { block: true, reason: `${MARKER} user rejected ${name}` };
     }
   });
 }
