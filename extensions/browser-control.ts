@@ -13,6 +13,12 @@ const MARKER = "pi-browser-control:";
 
 export default function browserControl(pi: ExtensionAPI) {
   let config: PolicyConfig = loadConfig();
+  let pinnedModel: string | null = null;
+
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const m = ctx.model as { id?: string; provider?: string } | undefined;
+    pinnedModel = m?.id ? `${m.provider ?? "?"}/${m.id}` : null;
+  });
 
   pi.registerCommand("bc-view", {
     description: "[pi-browser-control] Live view read-only tab agent agar user bisa menonton",
@@ -36,6 +42,11 @@ export default function browserControl(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const name = String(event.toolName ?? "");
     if (!name.startsWith("browser_")) return;
+    const m = ctx.model as { id?: string; provider?: string } | undefined;
+    const current = m?.id ? `${m.provider ?? "?"}/${m.id}` : null;
+    if (pinnedModel && current && pinnedModel !== current) {
+      return { block: true, reason: `${MARKER} model berubah di tengah jalan (${pinnedModel} -> ${current}). Ulangi dari snapshot baru agar konteks konsisten.` };
+    }
     const url = typeof event.input?.url === "string" ? event.input.url : undefined;
     if (url) {
       const verdict = checkPermission(url, config);

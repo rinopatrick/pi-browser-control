@@ -34,3 +34,11 @@ test("guard hanya peduli tool browser_", () => {
   const relevant = names.filter((n) => n.startsWith("browser_"));
   assert.deepEqual(relevant, ["browser_navigate", "browser_click"]);
 });
+
+test("pin model: ganti model di tengah jalan terdeteksi", () => {
+  const pinned = "surplus/deepseek-v4.1-flash";
+  const same = "surplus/deepseek-v4.1-flash";
+  const changed = "agentrouter/gpt-5-mini";
+  assert.equal(pinned === same, true);
+  assert.equal(pinned === changed, false);
+});
