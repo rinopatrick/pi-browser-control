@@ -1,29 +1,29 @@
 # pi-browser-control
 
-Browser control ala Codex desktop untuk Pi: agent operasikan Chrome terlihat,
-user menonton live, tab lain tidak terganggu. Bukan computer use.
+Codex-desktop-style browser control for Pi: the agent operates a visible Chrome,
+the user watches live, other tabs are undisturbed. Not computer use.
 
 ## Install
 
 ```bash
-pi install ./pi-browser-control   # lokal, atau
-pi install npm:pi-browser-control # setelah publish
+pi install ./pi-browser-control   # local, or
+pi install npm:pi-browser-control # after publishing
 ```
 
-Aktifkan remote debugging Chrome, lalu `/browser-setup` (dari harness) sekali.
+Enable Chrome remote debugging, then run `/browser-setup` (from the harness) once.
 
-## Pakai
+## Usage
 
-- `/bc-view` — live view read-only tab agent.
-- `/bc-policy` — policy efektif.
-- Anotasi: klik elemen di live page, tinggalkan komentar, agent baca balik.
+- `/bc-view` — read-only live view of the agent tab.
+- `/bc-policy` — effective policy.
+- Annotations: click an element on the live page, leave a comment, the agent reads it back.
 
-## Arsitektur
+## Architecture
 
-Engine CDP = harness (dependensi). Lapisan ini: guard policy, command UX,
-skill, overlay anotasi.
+CDP engine = harness (dependency). This layer: policy guard, command UX,
+skill, annotation overlay.
 
 ## Credit
 
-- [pi-browser-harness](https://github.com/amankumarsingh77/pi-browser-harness) — engine CDP (40 tools, ref-first, owned-tab).
-- Pola anotasi + policy: `pi-browser-plus` (milik penulis).
+- [pi-browser-harness](https://github.com/amankumarsingh77/pi-browser-harness) — CDP engine (40 tools, ref-first, owned-tab).
+- Annotation + policy patterns: `pi-browser-plus` (author's own).
