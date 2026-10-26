@@ -14,8 +14,8 @@ Aktifkan remote debugging Chrome, lalu `/browser-setup` (dari harness) sekali.
 
 ## Pakai
 
-- `/browser-view` — live view read-only tab agent.
-- `/browser-policy` — policy efektif.
+- `/bc-view` — live view read-only tab agent.
+- `/bc-policy` — policy efektif.
 - Anotasi: klik elemen di live page, tinggalkan komentar, agent baca balik.
 
 ## Arsitektur

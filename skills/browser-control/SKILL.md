@@ -9,8 +9,8 @@ Attach ke Chrome berjalan, kerja di owned tab, live view read-only.
 
 ## Perintah
 
-- `/browser-view` — tampilkan tab agent agar user menonton.
-- `/browser-policy` — tampilkan policy efektif.
+- `/bc-view` — tampilkan tab agent agar user menonton.
+- `/bc-policy` — tampilkan policy efektif.
 
 ## Aliran kerja
 

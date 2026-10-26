@@ -2,8 +2,8 @@
  * pi-browser-control — browser control ala Codex untuk Pi.
  *
  * Engine CDP: pi-browser-harness (dependensi, credit di README).
- * Lapisan ini: guard policy per-site, command browser-view (live view),
- * command browser-policy (tampilkan policy efektif).
+ * Lapisan ini: guard policy per-site, command bc-view (live view),
+ * command bc-policy (tampilkan policy efektif).
  */
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -13,25 +13,28 @@ const MARKER = "pi-browser-control:";
 
 export default function browserControl(pi: ExtensionAPI) {
   let config: PolicyConfig = loadConfig();
+  let pinnedModel: string | null = null;
 
-  pi.registerCommand("browser-view", {
-    description: "Buka live view read-only tab agent agar user bisa menonton",
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const m = ctx.model as { id?: string; provider?: string } | undefined;
+    pinnedModel = m?.id ? `${m.provider ?? "?"}/${m.id}` : null;
+  });
+
+  pi.registerCommand("bc-view", {
+    description: "[pi-browser-control] Live view read-only tab agent agar user bisa menonton",
     handler: async (_args: string) => {
       pi.sendUserMessage(
-        "Panggil tool browser_snapshot milik harness dengan includeScreenshot=true, " +
-        "lalu tampilkan ringkas apa yang terlihat di tab agent saat ini.",
+        "Panggil tool browser_snapshot milik harness dengan includeScreenshot=true, lalu tampilkan ringkas apa yang terlihat di tab agent.",
       );
     },
   });
 
-  pi.registerCommand("browser-policy", {
-    description: "Tampilkan policy browser yang berlaku",
+  pi.registerCommand("bc-policy", {
+    description: "[pi-browser-control] Tampilkan policy browser yang berlaku",
     handler: async (_args: string, ctx) => {
       config = loadConfig({ cwd: ctx.cwd });
       pi.sendUserMessage(
-        `Policy: deny=[${config.permissions.deny.join(", ") || "none"}] ` +
-        `allow=[${config.permissions.allow.join(", ") || "none"}]. ` +
-        "Tampilkan ke user apa adanya.",
+        `Policy deny=[${config.permissions.deny.join(", ") || "none"}] allow=[${config.permissions.allow.join(", ") || "none"}]`,
       );
     },
   });
@@ -39,6 +42,11 @@ export default function browserControl(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const name = String(event.toolName ?? "");
     if (!name.startsWith("browser_")) return;
+    const m = ctx.model as { id?: string; provider?: string } | undefined;
+    const current = m?.id ? `${m.provider ?? "?"}/${m.id}` : null;
+    if (pinnedModel && current && pinnedModel !== current) {
+      return { block: true, reason: `${MARKER} model berubah di tengah jalan (${pinnedModel} -> ${current}). Ulangi dari snapshot baru agar konteks konsisten.` };
+    }
     const url = typeof event.input?.url === "string" ? event.input.url : undefined;
     if (url) {
       const verdict = checkPermission(url, config);
