@@ -14,6 +14,9 @@
 
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const PORT = Number(
   process.env.PI_BC_PORT ||
@@ -21,6 +24,24 @@ const PORT = Number(
 );
 const HOST = "127.0.0.1";
 const EXT_TIMEOUT_MS = 15000;
+const LOG_DIR = join(homedir(), ".pi", "agent");
+const LOG_FILE = join(LOG_DIR, "pi-browser-control-bridge.log");
+
+try {
+  mkdirSync(LOG_DIR, { recursive: true });
+} catch {}
+
+function log(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    appendFileSync(LOG_FILE, line);
+  } catch {}
+}
+
+// A local bridge should stay up. Log and continue instead of dying, so a bad
+// frame or an aborted client cannot take the whole bridge down.
+process.on("uncaughtException", (e) => log("uncaughtException: " + (e && e.stack ? e.stack : e)));
+process.on("unhandledRejection", (e) => log("unhandledRejection: " + (e && e.stack ? e.stack : e)));
 
 let extSocket = null;
 let extSince = 0;
@@ -137,6 +158,27 @@ function readBody(req) {
 }
 
 const server = createServer(async (req, res) => {
+  // A client that aborts mid-response must never crash the bridge.
+  res.on("error", () => {});
+  try {
+    await route(req, res);
+  } catch (e) {
+    log("request error: " + (e && e.stack ? e.stack : e));
+    try {
+      if (!res.headersSent) json(res, 500, { ok: false, error: "internal error" });
+      else res.end();
+    } catch {}
+  }
+});
+
+server.on("clientError", (err, socket) => {
+  log("clientError: " + (err && err.message ? err.message : err));
+  try {
+    socket.destroy();
+  } catch {}
+});
+
+async function route(req, res) {
   if (req.url === "/health") {
     return json(res, 200, {
       ok: true,
@@ -209,7 +251,7 @@ const server = createServer(async (req, res) => {
   }
 
   json(res, 404, { ok: false, error: "not found" });
-});
+}
 
 server.on("upgrade", (req, socket) => {
   if (!req.url || !req.url.startsWith("/ext")) {
