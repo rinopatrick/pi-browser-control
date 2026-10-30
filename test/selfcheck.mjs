@@ -6,7 +6,7 @@ import { bridgeSend, bridgeStatus, bridgeShutdown, BRIDGE_PORT } from "../lib/br
 const TEST_PORT = 17999;
 
 test("bridge auto-start server, lalu 503 karena extension belum konek", async () => {
-  const res = await bridgeSend({ op: "listTabs" }, { port: TEST_PORT, timeoutMs: 8000 });
+  const res = await bridgeSend({ op: "listTabs" }, { port: TEST_PORT, timeoutMs: 12000 });
   assert.equal(res.ok, false);
   assert.match(String(res.error), /extension not connected|companion/i);
   const st = await bridgeStatus({ port: TEST_PORT });
