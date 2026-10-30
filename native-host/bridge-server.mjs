@@ -45,8 +45,10 @@ process.on("unhandledRejection", (e) => log("unhandledRejection: " + (e && e.sta
 
 let extSocket = null;
 let extSince = 0;
+let lastExtAt = 0;
 const pending = new Map();
 let seq = 1;
+const EXT_SILENCE_MS = 45000; // extension pings every 30s; silence means dead peer
 
 function wsAccept(key) {
   return createHash("sha1")
@@ -211,6 +213,15 @@ async function route(req, res) {
     if (!msg || !msg.op) return json(res, 400, { ok: false, error: "need {op, tabId?, command?}" });
 
     if (!extSocket) {
+      // The extension reconnects within seconds after a drop. Wait briefly
+      // instead of failing the caller on the first attempt.
+      const deadline = Date.now() + 3000;
+      while (!extSocket && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+
+    if (!extSocket) {
       return json(res, 503, {
         ok: false,
         error:
@@ -224,7 +235,11 @@ async function route(req, res) {
     const reply = await new Promise((resolve) => {
       const timer = setTimeout(() => {
         pending.delete(id);
-        resolve({ id, ok: false, error: "timeout waiting for extension (15s)" });
+        // No answer means the peer is dead (worker suspended / socket half-open).
+        // Drop it so the next call is not written into the void.
+        log("command timeout, dropping extension socket");
+        dropExtension();
+        resolve({ id, ok: false, error: "timeout waiting for extension (15s) — dropped stale connection" });
       }, EXT_TIMEOUT_MS);
       pending.set(id, (r) => {
         clearTimeout(timer);
@@ -282,16 +297,18 @@ server.on("upgrade", (req, socket) => {
   // One extension at a time: a new connection replaces the old one.
   if (extSocket && extSocket !== socket) {
     try {
-      extSocket.end();
+      extSocket.destroy();
     } catch {}
   }
   extSocket = socket;
   extSince = Date.now();
-  process.stderr.write(`[bridge] extension connected (${extSince})\n`);
+  lastExtAt = Date.now();
+  log(`extension connected (origin=${origin || "none"})`);
 
   attachFrameReader(
     socket,
     (text) => {
+      lastExtAt = Date.now();
       let msg;
       try {
         msg = JSON.parse(text);
@@ -307,11 +324,33 @@ server.on("upgrade", (req, socket) => {
       if (extSocket === socket) {
         extSocket = null;
         extSince = 0;
-        process.stderr.write("[bridge] extension disconnected\n");
+        lastExtAt = 0;
+        log("extension disconnected");
       }
     }
   );
 });
+
+function dropExtension() {
+  const s = extSocket;
+  extSocket = null;
+  extSince = 0;
+  lastExtAt = 0;
+  if (s) {
+    try {
+      s.destroy();
+    } catch {}
+  }
+}
+
+// Prune half-open sockets: Chrome may suspend the service worker without a FIN,
+// leaving a socket that looks connected but can never answer.
+setInterval(() => {
+  if (extSocket && lastExtAt && Date.now() - lastExtAt > EXT_SILENCE_MS) {
+    log(`extension silent for ${Math.round((Date.now() - lastExtAt) / 1000)}s, dropping`);
+    dropExtension();
+  }
+}, 10000).unref();
 
 server.on("error", (e) => {
   process.stderr.write("[bridge] listen failed: " + (e && e.message) + "\n");
